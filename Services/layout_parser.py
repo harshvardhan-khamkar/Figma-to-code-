@@ -1,17 +1,26 @@
-def extract_elements(node):
+def extract_elements(node: dict) -> list:
     """
-    Recursively extracts all child elements of a Figma node,
-    including type, name, text (for TEXT nodes), styles, and layout info (for FRAME nodes).
+    Recursively extracts child elements from a Figma node.
+
+    Captures:
+    - type (FRAME, TEXT, etc.)
+    - name
+    - text (for TEXT nodes)
+    - basic typography style
+    - basic layout metadata (for FRAME nodes)
     """
+
     elements = []
 
     for child in node.get("children", []):
+        node_type = child.get("type")
+
         el = {
-            "type": child["type"],           # Node type (FRAME, TEXT, RECTANGLE, etc.)
-            "name": child.get("name", "")    # Node name
+            "type": node_type,
+            "name": child.get("name", "")
         }
 
-        # ----- Style extraction (for TEXT nodes and others if available) -----
+        # -------- TEXT STYLE EXTRACTION --------
         style = child.get("style", {})
         el["style"] = {
             "fontSize": style.get("fontSize"),
@@ -19,19 +28,19 @@ def extract_elements(node):
             "textAlign": style.get("textAlignHorizontal")
         }
 
-        # ----- Layout extraction (for FRAME nodes) -----
-        if child["type"] == "FRAME":
+        # -------- FRAME LAYOUT EXTRACTION --------
+        if node_type == "FRAME":
             el["layout"] = {
-                "direction": child.get("layoutMode"),  # HORIZONTAL or VERTICAL
-                "gap": child.get("itemSpacing"),       # spacing between children
-                "padding": child.get("paddingLeft")    # padding (simplified)
+                "direction": child.get("layoutMode"),      # HORIZONTAL / VERTICAL
+                "gap": child.get("itemSpacing"),
+                "padding": child.get("paddingLeft")
             }
 
-        # ----- Text content (for TEXT nodes) -----
-        if child["type"] == "TEXT":
+        # -------- TEXT CONTENT --------
+        if node_type == "TEXT":
             el["text"] = child.get("characters", "")
 
-        # ----- Recursively extract children -----
+        # -------- RECURSION --------
         el["children"] = extract_elements(child)
 
         elements.append(el)
@@ -41,37 +50,65 @@ def extract_elements(node):
 
 def parse_figma_layout(figma_json: dict) -> dict:
     """
-    Parses an entire Figma file JSON into a structured layout dictionary
-    that includes multiple pages, each page's frames/sections, 
-    and all nested elements with style and layout info.
+    Parses a full Figma file into a structured, app-ready layout:
+
+    Output structure:
+    - file_name
+    - globals   -> shared components (header/footer/nav)
+    - pages     -> page-specific sections
+
+    This structure is suitable for:
+    - HTML layouts
+    - React / Angular routing
     """
+
     document = figma_json.get("document", {})
 
     layout = {
-        "file_name": document.get("name", "Figma File"),  # optional: file name
-        "pages": []  # store multiple pages
+        "file_name": document.get("name", "Figma File"),
+        "globals": {},     # shared layout components
+        "pages": []
     }
 
-    # ----- Loop over all pages in the Figma file -----
+    # Heuristic keywords for shared components
+    GLOBAL_KEYS = ["header", "navbar", "nav", "footer"]
+
     for page in document.get("children", []):
+        page_name = page.get("name", "")
+
         page_data = {
-            "page_name": page.get("name", ""),
-            "sections": []  # each top-level frame/instance on the page
+            "page_name": page_name,
+            "slug": page_name.lower().replace(" ", "-"),
+            "sections": []
         }
 
-        # ----- Loop over all top-level nodes in the page -----
         for node in page.get("children", []):
-            # Only treat FRAME and INSTANCE as sections
-            if node["type"] not in ["FRAME", "INSTANCE"]:
+            node_type = node.get("type")
+            if node_type not in ["FRAME", "INSTANCE"]:
                 continue
 
-            section = {
-                "name": node.get("name", ""),
-                "type": node.get("type", ""),
-                "children": extract_elements(node)  # recursive extraction
-            }
+            name = node.get("name", "")
+            name_lower = name.lower()
 
-            page_data["sections"].append(section)
+            extracted_children = extract_elements(node)
+
+            # -------- GLOBAL COMPONENT DETECTION --------
+            if any(key in name_lower for key in GLOBAL_KEYS):
+                # store once only
+                if name_lower not in layout["globals"]:
+                    layout["globals"][name_lower] = {
+                        "name": name,
+                        "type": node_type,
+                        "children": extracted_children
+                    }
+                continue
+
+            # -------- PAGE-SPECIFIC SECTIONS --------
+            page_data["sections"].append({
+                "name": name,
+                "type": node_type,
+                "children": extracted_children
+            })
 
         layout["pages"].append(page_data)
 
